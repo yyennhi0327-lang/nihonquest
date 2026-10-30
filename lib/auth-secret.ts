@@ -34,7 +34,7 @@ export function getAuthSecret(): string {
         "Using emergency fallback secret to prevent crashing serverless functions. " +
         "Please ensure NEXTAUTH_SECRET is configured in Netlify environment variables.",
     );
-    return secret || "emergency-production-fallback-secret-min-32-chars-nihonquest";
+    return "emergency-production-fallback-secret-min-32-chars-nihonquest";
   }
 
   if (!warnedDevSecret && process.env.NODE_ENV !== "test") {
@@ -44,6 +44,7 @@ export function getAuthSecret(): string {
     );
   }
 
-  return secret || DEV_FALLBACK_SECRET;
+  return DEV_FALLBACK_SECRET;
 }
+
 
