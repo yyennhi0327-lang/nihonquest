@@ -8,7 +8,8 @@ import { useSoundAndTheme } from "@/components/SoundAndThemeContext";
 import { notifyProgressUpdated } from "@/components/UserProgressContext";
 import { useNativeLanguage } from "@/components/LanguageContext";
 import { getLocalizedLessonTitle } from "@/lib/lessonLocalization";
-import { LocalizedQuizText } from "@/lib/quizLocalization";
+import { LocalizedQuizText, useQuizTextTranslation } from "@/lib/quizLocalization";
+import { getQuestionSpeechInfo } from "@/lib/questionSpeech";
 import { useAiScreenContext } from "@/components/ai-sensei/AiScreenContext";
 import { SpeakButton } from "./LessonSections";
 import { IconArrowRight, IconCheck, IconClose, IconRefresh } from "./LessonIcons";
@@ -183,6 +184,18 @@ export function QuizRunner({
   const totalQuestions = lesson.exercises.length;
   const currentExercise: Exercise | undefined = lesson.exercises[queue[0]];
   const currentNumber = attemptTotal - queue.length + 1;
+
+  const currentQuestionText = currentExercise?.question || "";
+  const localizedQuestionText = useQuizTextTranslation(currentQuestionText);
+
+  const speechInfo = useMemo(() => {
+    return getQuestionSpeechInfo(currentQuestionText, localizedQuestionText, nativeLanguage);
+  }, [currentQuestionText, localizedQuestionText, nativeLanguage]);
+
+  const handleSpeakQuestion = useCallback(() => {
+    if (!speechInfo.targetText) return;
+    speak(speechInfo.targetText, undefined, undefined, speechInfo.speechLang);
+  }, [speak, speechInfo]);
 
   useEffect(() => {
     if (currentExercise) {
@@ -618,7 +631,14 @@ export function QuizRunner({
             <i className="h-3 w-0.5 rounded bg-red-500" aria-hidden />
             {exerciseKind(currentExercise.contentType, t)}
           </span>
-          <SpeakButton onClick={() => speak(currentExercise.question)} label={t("listenQuestion") || "Nghe phát âm câu hỏi"} />
+          <div className="flex items-center gap-2">
+            {speechInfo.badgeText && (
+              <span className="jp-text hidden rounded-lg border border-red-200/70 bg-rose-50/80 px-2.5 py-1 text-xs font-black text-red-600 dark:border-red-900/50 dark:bg-red-950/50 dark:text-red-300 sm:inline">
+                {speechInfo.badgeText}
+              </span>
+            )}
+            <SpeakButton onClick={handleSpeakQuestion} label={speechInfo.buttonLabel} />
+          </div>
         </div>
 
         <h3 className="text-lg font-black leading-snug text-balance text-slate-900 dark:text-white sm:text-xl">

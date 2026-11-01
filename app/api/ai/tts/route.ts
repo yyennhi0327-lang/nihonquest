@@ -85,10 +85,11 @@ async function synthesizeOpenAiTts(text: string, voiceName: string): Promise<Buf
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Google Translate TTS (no API key, female voice only, 300-char limit)
+// Google Translate TTS (no API key, 300-char limit)
 // ──────────────────────────────────────────────────────────────────────────
-async function synthesizeGoogleTts(text: string, slow = false): Promise<Buffer | null> {
-  const url = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(text)}&tl=ja&client=tw-ob${slow ? "&ttsspeed=0.5" : ""}`;
+async function synthesizeGoogleTts(text: string, slow = false, lang = "ja"): Promise<Buffer | null> {
+  const tl = lang.startsWith("zh") ? lang : (lang.split("-")[0] || "ja");
+  const url = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(text)}&tl=${encodeURIComponent(tl)}&client=tw-ob${slow ? "&ttsspeed=0.5" : ""}`;
   try {
     const res = await fetch(url, {
       headers: {
@@ -121,8 +122,33 @@ export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const text = searchParams.get("text")?.trim();
   const voiceParam = searchParams.get("voice") ?? "";
+  const langParam = (searchParams.get("lang") || "ja").trim().toLowerCase();
 
   if (!text) return new NextResponse("text param required", { status: 400 });
+
+  // Map requested language to default Edge Neural voice
+  const LANG_EDGE_VOICES: Record<string, string> = {
+    vi: "vi-VN-HoaiMyNeural",
+    "vi-vn": "vi-VN-HoaiMyNeural",
+    en: "en-US-JennyNeural",
+    "en-us": "en-US-JennyNeural",
+    "zh-cn": "zh-CN-XiaoxiaoNeural",
+    zh: "zh-CN-XiaoxiaoNeural",
+    "zh-tw": "zh-TW-HsiaoChenNeural",
+    ko: "ko-KR-SunHiNeural",
+    "ko-kr": "ko-KR-SunHiNeural",
+    es: "es-ES-ElviraNeural",
+    fr: "fr-FR-DeniseNeural",
+    de: "de-DE-KatjaNeural",
+    id: "id-ID-GadisNeural",
+    th: "th-TH-PremwadeeNeural",
+    ru: "ru-RU-SvetlanaNeural",
+    pt: "pt-BR-FranciscaNeural",
+    ja: "ja-JP-NanamiNeural",
+    "ja-jp": "ja-JP-NanamiNeural",
+  };
+  const baseLang = langParam.split("-")[0];
+  const defaultEdgeVoiceForLang = LANG_EDGE_VOICES[langParam] || LANG_EDGE_VOICES[baseLang] || "ja-JP-NanamiNeural";
 
   // Clean text: strip emoji + parenthetical notes
   const cleanText = text
@@ -178,7 +204,7 @@ export async function GET(req: NextRequest) {
       providerUsed = `edge:${voiceName}`;
     } else {
       // Fallback to Google if Edge TTS fails
-      audio = await synthesizeGoogleTts(cleanText);
+      audio = await synthesizeGoogleTts(cleanText, false, langParam);
       providerUsed = "google:fallback";
     }
   } else if (voiceParam.startsWith("openai:")) {
@@ -204,19 +230,19 @@ export async function GET(req: NextRequest) {
       }
     }
     if (!audio) {
-      audio = await synthesizeGoogleTts(cleanText);
+      audio = await synthesizeGoogleTts(cleanText, false, langParam);
     }
   } else if (voiceParam === "google:slow") {
-    audio = await synthesizeGoogleTts(cleanText, true);
+    audio = await synthesizeGoogleTts(cleanText, true, langParam);
     providerUsed = "google:slow";
   } else {
-    // Default: Edge Nanami Neural if available, else Google TTS
-    audio = await synthesizeEdgeTts(cleanText, "ja-JP-NanamiNeural");
+    // Default: Edge Neural for requested language if available, else Google TTS
+    audio = await synthesizeEdgeTts(cleanText, defaultEdgeVoiceForLang);
     if (audio) {
-      providerUsed = "edge:ja-JP-NanamiNeural";
+      providerUsed = `edge:${defaultEdgeVoiceForLang}`;
     } else {
-      audio = await synthesizeGoogleTts(cleanText);
-      providerUsed = "google";
+      audio = await synthesizeGoogleTts(cleanText, false, langParam);
+      providerUsed = `google:${langParam}`;
     }
   }
 

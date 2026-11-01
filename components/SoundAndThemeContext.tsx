@@ -42,7 +42,7 @@ interface SoundAndThemeContextType {
   speechVoiceURI: string;
   setSpeechVoiceURI: (uri: string) => void;
   availableVoices: VoiceOption[];
-  speak: (text: string, customRate?: number, customVoiceURI?: string) => void;
+  speak: (text: string, customRate?: number, customVoiceURI?: string, lang?: string) => void;
   speakAll: (texts: string[], customRate?: number) => void;
   stopSpeaking: () => void;
   hasJapaneseVoice: boolean;
@@ -256,10 +256,10 @@ export function SoundAndThemeProvider({ children }: { children: React.ReactNode 
   // Global Speech Function
   // Routes to browser speechSynthesis (for "browser:" voices)
   // or Google Translate TTS proxy (for "gtts:" voices)
-  // or auto-detect best Japanese voice (for "" / device voices)
+  // or auto-detect best voice for language (Japanese by default, or requested lang)
   // ──────────────────────────────────────────────────────────────────────
   const speak = useCallback(
-    (text: string, customRate?: number, customVoiceURI?: string) => {
+    (text: string, customRate?: number, customVoiceURI?: string, lang?: string) => {
       if (!text || typeof window === "undefined") return;
       const cleanText = text
         .replace(/\p{Extended_Pictographic}/gu, "")
@@ -278,13 +278,17 @@ export function SoundAndThemeProvider({ children }: { children: React.ReactNode 
       };
       setSpeakingText(text);
 
-      const targetVoice = customVoiceURI !== undefined ? customVoiceURI : speechVoiceURI;
+      const isNonJa = Boolean(lang && !lang.toLowerCase().startsWith("ja"));
+      const targetVoice = customVoiceURI !== undefined ? customVoiceURI : (isNonJa ? "" : speechVoiceURI);
+      const speechLang = lang || "ja-JP";
+      const langCode = speechLang.split("-")[0].toLowerCase();
 
       /** Play via Microsoft Edge Neural TTS server endpoint (Universal HD quality) */
       const playEdgeNeuralTts = (voiceKey: string) => {
         try {
           const encoded = encodeURIComponent(cleanText.slice(0, 300));
-          const url = `/api/ai/tts?text=${encoded}&voice=edge:${encodeURIComponent(voiceKey)}`;
+          const langQuery = isNonJa ? `&lang=${encodeURIComponent(speechLang)}` : "";
+          const url = `/api/ai/tts?text=${encoded}&voice=edge:${encodeURIComponent(voiceKey)}${langQuery}`;
           const audio = new Audio(url);
           activeAudioRef.current = audio;
           audio.playbackRate = customRate ?? speechRate;
@@ -305,7 +309,8 @@ export function SoundAndThemeProvider({ children }: { children: React.ReactNode 
         try {
           const encoded = encodeURIComponent(cleanText.slice(0, 300));
           const voiceQuery = slow ? "&voice=google%3Aslow" : "";
-          const url = `/api/ai/tts?text=${encoded}${voiceQuery}`;
+          const langQuery = isNonJa ? `&lang=${encodeURIComponent(speechLang)}` : "";
+          const url = `/api/ai/tts?text=${encoded}${voiceQuery}${langQuery}`;
 
           const audio = new Audio(url);
           activeAudioRef.current = audio;
@@ -315,8 +320,9 @@ export function SoundAndThemeProvider({ children }: { children: React.ReactNode 
             if (speakIdRef.current !== speakId) return;
             // Last resort: direct Google TTS
             try {
+              const tl = speechLang.startsWith("zh") ? speechLang : (langCode || "ja");
               const directAudio = new Audio(
-                `https://translate.google.com/translate_tts?ie=UTF-8&q=${encoded}&tl=ja&client=tw-ob${slow ? "&ttsspeed=0.5" : ""}`
+                `https://translate.google.com/translate_tts?ie=UTF-8&q=${encoded}&tl=${encodeURIComponent(tl)}&client=tw-ob${slow ? "&ttsspeed=0.5" : ""}`
               );
               activeAudioRef.current = directAudio;
               directAudio.playbackRate = customRate ?? speechRate;
@@ -345,7 +351,7 @@ export function SoundAndThemeProvider({ children }: { children: React.ReactNode 
           window.speechSynthesis.cancel();
 
           const u = new SpeechSynthesisUtterance(cleanText);
-          u.lang = "ja-JP";
+          u.lang = speechLang;
           u.rate = customRate ?? speechRate;
           if (voice) u.voice = voice;
 
@@ -363,6 +369,28 @@ export function SoundAndThemeProvider({ children }: { children: React.ReactNode 
           playGoogleTts();
         }
       };
+
+      // ── Non-Japanese requested (e.g. localized question text in vi, en, zh...) ──
+      if (isNonJa) {
+        try {
+          if ("speechSynthesis" in window) {
+            window.speechSynthesis.cancel();
+            const allSystemVoices = window.speechSynthesis.getVoices();
+            const matchedVoice = allSystemVoices.find((v) => {
+              const vl = (v.lang || "").toLowerCase();
+              return vl === speechLang.toLowerCase() || vl.startsWith(langCode);
+            }) ?? null;
+
+            if (matchedVoice) {
+              speakWithBrowserVoice(matchedVoice);
+              return;
+            }
+          }
+        } catch {}
+
+        playGoogleTts();
+        return;
+      }
 
       // ── Google Translate TTS voice (server proxy) ──
       if (isGoogleTtsId(targetVoice)) {
