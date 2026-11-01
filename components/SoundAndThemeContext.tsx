@@ -2,6 +2,9 @@
 
 import React, { createContext, useContext, useEffect, useRef, useState, useCallback } from "react";
 import { CLOUD_VOICES, findBrowserVoice, isBrowserVoiceId, isGoogleTtsId, checkVoiceAvailability } from "@/lib/cloudTtsVoices";
+import type { QuestionSpeechMode } from "@/lib/questionSpeech";
+
+export type { QuestionSpeechMode };
 
 type Theme = "light" | "dark" | "system";
 type ResolvedTheme = "light" | "dark";
@@ -42,8 +45,9 @@ interface SoundAndThemeContextType {
   speechVoiceURI: string;
   setSpeechVoiceURI: (uri: string) => void;
   availableVoices: VoiceOption[];
+  questionSpeechMode: QuestionSpeechMode;
+  setQuestionSpeechMode: (mode: QuestionSpeechMode) => void;
   speak: (text: string, customRate?: number, customVoiceURI?: string, lang?: string) => void;
-  speakSequence: (items: Array<{ text: string; lang?: string; delayMs?: number }>, customRate?: number) => void;
   speakAll: (texts: string[], customRate?: number) => void;
   stopSpeaking: () => void;
   hasJapaneseVoice: boolean;
@@ -66,7 +70,14 @@ export function SoundAndThemeProvider({ children }: { children: React.ReactNode 
   // Speech TTS State
   const [speechRate, setSpeechRateState] = useState<number>(0.85);
   const [speechVoiceURI, setSpeechVoiceURIState] = useState<string>("");
-  const [availableVoices, setAvailableVoices] = useState<VoiceOption[]>([]);
+  const [questionSpeechMode, setQuestionSpeechModeState] = useState<QuestionSpeechMode>("target");
+  const [availableVoices, setAvailableVoices] = useState<VoiceOption[]>(() =>
+    CLOUD_VOICES.map((c) => ({
+      name: `${c.displayName} · ${c.gender === "female" ? "♀ Nữ" : "♂ Nam"} (${c.isNeural ? "Neural HD" : "Thiết bị"})`,
+      lang: "ja-JP",
+      voiceURI: c.id,
+    }))
+  );
   const [speakingText, setSpeakingText] = useState<string | null>(null);
   const [hasJapaneseVoice, setHasJapaneseVoice] = useState<boolean>(true);
   const speakIdRef = useRef(0);
@@ -133,12 +144,22 @@ export function SoundAndThemeProvider({ children }: { children: React.ReactNode 
       if (storedVoice) {
         setSpeechVoiceURIState(storedVoice);
       }
+      const storedQuestionSpeechMode = localStorage.getItem("nq_question_speech_mode") as QuestionSpeechMode | null;
+      if (storedQuestionSpeechMode && ["target", "bilingual", "full_ja"].includes(storedQuestionSpeechMode)) {
+        setQuestionSpeechModeState(storedQuestionSpeechMode);
+      }
     } catch {
       // Ignore
     }
 
-    // Load Web Speech Voices
+    // Load Web Speech Voices & Merge with Neural Cloud Voices
     const updateVoices = () => {
+      const cloudOptions: VoiceOption[] = CLOUD_VOICES.map((c) => ({
+        name: `${c.displayName} · ${c.gender === "female" ? "♀ Nữ" : "♂ Nam"} (${c.isNeural ? "Neural HD" : "Thiết bị"})`,
+        lang: "ja-JP",
+        voiceURI: c.id,
+      }));
+
       if (typeof window !== "undefined" && "speechSynthesis" in window) {
         const voices = window.speechSynthesis.getVoices();
         const jaVoices = voices
@@ -157,7 +178,7 @@ export function SoundAndThemeProvider({ children }: { children: React.ReactNode 
             );
           })
           .map((v) => ({
-            name: v.name,
+            name: `${v.name} (Thiết bị)`,
             lang: v.lang,
             voiceURI: v.voiceURI,
           }));
@@ -165,14 +186,15 @@ export function SoundAndThemeProvider({ children }: { children: React.ReactNode 
         const hasJa = jaVoices.length > 0;
         setHasJapaneseVoice(hasJa);
 
-        // If no strict Japanese match, list all voices as fallback
-        const finalVoices = hasJa ? jaVoices : voices.slice(0, 15).map((v) => ({
-          name: v.name,
-          lang: v.lang,
-          voiceURI: v.voiceURI,
-        }));
+        // Combined: Cloud Neural voices FIRST, then local device voices
+        const combined = [
+          ...cloudOptions,
+          ...jaVoices.filter((jv) => !cloudOptions.some((co) => co.voiceURI === jv.voiceURI)),
+        ];
 
-        setAvailableVoices(finalVoices);
+        setAvailableVoices(combined);
+      } else {
+        setAvailableVoices(cloudOptions);
       }
     };
 
@@ -253,6 +275,13 @@ export function SoundAndThemeProvider({ children }: { children: React.ReactNode 
     } catch {}
   };
 
+  const setQuestionSpeechMode = (mode: QuestionSpeechMode) => {
+    setQuestionSpeechModeState(mode);
+    try {
+      localStorage.setItem("nq_question_speech_mode", mode);
+    } catch {}
+  };
+
   // ──────────────────────────────────────────────────────────────────────
   // Global Speech Function
   // Routes to browser speechSynthesis (for "browser:" voices)
@@ -263,16 +292,15 @@ export function SoundAndThemeProvider({ children }: { children: React.ReactNode 
     (text: string, customRate?: number, customVoiceURI?: string, lang?: string) => {
       if (!text || typeof window === "undefined") return;
       const isNonJa = Boolean(lang && !lang.toLowerCase().startsWith("ja"));
-      const cleanText = isNonJa
-        ? text
-            .replace(/\p{Extended_Pictographic}/gu, "")
-            .replace(/\/[^/\s]{1,10}\//g, "") // Clean IPA slashes e.g. /ɸɯ/
-            .replace(/_{2,}/g, " ")
-            .trim()
-        : text
-            .replace(/\p{Extended_Pictographic}/gu, "")
-            .replace(/[\(\[\{（【].*?[\)\]\}）】]/g, "")
-            .trim();
+      const cleanText = text
+        .replace(/\p{Extended_Pictographic}/gu, "")
+        .replace(/\/ɸɯ\//g, "phát âm fu")
+        .replace(/\/ɕi\//g, "phát âm shi")
+        .replace(/\/t͡sɯ\//g, "phát âm tsu")
+        .replace(/\/[^\/]{1,8}\//g, "")
+        .replace(/_{2,}/g, "、")
+        .replace(isNonJa ? /[\(\[\{（【](.*?)[\)\]\}）】]/g : /[\(\[\{（【].*?[\)\]\}）】]/g, isNonJa ? " $1 " : "")
+        .trim();
       if (!cleanText) return;
 
       stopSpeaking();
@@ -407,16 +435,16 @@ export function SoundAndThemeProvider({ children }: { children: React.ReactNode 
 
       // ── Cloud / Browser catalog voice ──
       if (isBrowserVoiceId(targetVoice)) {
+        // High fidelity Neural cloud voices synthesize via server Edge Neural for distinct persona
+        const catalogVoice = CLOUD_VOICES.find((v) => v.id === targetVoice);
+        if (catalogVoice?.edgeVoiceKey) {
+          playEdgeNeuralTts(catalogVoice.edgeVoiceKey);
+          return;
+        }
         const allVoices = ("speechSynthesis" in window) ? window.speechSynthesis.getVoices() : [];
         const matched = findBrowserVoice(targetVoice, allVoices);
         if (matched) {
           speakWithBrowserVoice(matched);
-          return;
-        }
-        // If not installed locally on this phone/browser, seamlessly synthesize via server Edge Neural!
-        const catalogVoice = CLOUD_VOICES.find((v) => v.id === targetVoice);
-        if (catalogVoice?.edgeVoiceKey) {
-          playEdgeNeuralTts(catalogVoice.edgeVoiceKey);
           return;
         }
         playGoogleTts();
@@ -510,106 +538,6 @@ export function SoundAndThemeProvider({ children }: { children: React.ReactNode 
       playNext();
     },
     [speechRate, speechVoiceURI, speak]
-  );
-
-  const speakSequence = useCallback(
-    (items: Array<{ text: string; lang?: string; delayMs?: number }>, customRate?: number) => {
-      if (typeof window === "undefined" || items.length === 0) return;
-      stopSpeaking();
-
-      const sequenceId = ++speakIdRef.current;
-      let currentIndex = 0;
-
-      const playNext = () => {
-        if (speakIdRef.current !== sequenceId || currentIndex >= items.length) {
-          if (speakIdRef.current === sequenceId) {
-            setSpeakingText(null);
-            activeAudioRef.current = null;
-          }
-          return;
-        }
-
-        const currentItem = items[currentIndex++];
-        if (!currentItem || !currentItem.text) {
-          playNext();
-          return;
-        }
-
-        setSpeakingText(currentItem.text);
-        const itemLang = currentItem.lang || "ja-JP";
-        const isItemNonJa = !itemLang.toLowerCase().startsWith("ja");
-        const cleanText = isItemNonJa
-          ? currentItem.text
-              .replace(/\p{Extended_Pictographic}/gu, "")
-              .replace(/\/[^/\s]{1,10}\//g, "")
-              .replace(/_{2,}/g, " ")
-              .trim()
-          : currentItem.text
-              .replace(/\p{Extended_Pictographic}/gu, "")
-              .replace(/[\(\[\{（【].*?[\)\]\}）】]/g, "")
-              .trim();
-
-        if (!cleanText) {
-          playNext();
-          return;
-        }
-
-        const stepFinish = () => {
-          if (speakIdRef.current !== sequenceId) return;
-          if (currentItem.delayMs) {
-            setTimeout(playNext, currentItem.delayMs);
-          } else {
-            playNext();
-          }
-        };
-
-        // Try browser speech
-        try {
-          if ("speechSynthesis" in window) {
-            window.speechSynthesis.cancel();
-            const allVoices = window.speechSynthesis.getVoices();
-            const langPrefix = itemLang.split("-")[0].toLowerCase();
-            const matchedVoice = allVoices.find((v) => {
-              const vl = (v.lang || "").toLowerCase();
-              return vl === itemLang.toLowerCase() || vl.startsWith(langPrefix);
-            }) ?? null;
-
-            if (matchedVoice || !isItemNonJa) {
-              const u = new SpeechSynthesisUtterance(cleanText);
-              u.lang = itemLang;
-              u.rate = customRate ?? speechRate;
-              if (matchedVoice) u.voice = matchedVoice;
-              u.onend = stepFinish;
-              u.onerror = (e) => {
-                if (e.error !== "canceled" && e.error !== "interrupted") {
-                  stepFinish();
-                }
-              };
-              window.speechSynthesis.speak(u);
-              return;
-            }
-          }
-        } catch {}
-
-        // Fallback to audio endpoint
-        try {
-          const encoded = encodeURIComponent(cleanText.slice(0, 300));
-          const langQuery = isItemNonJa ? `&lang=${encodeURIComponent(itemLang)}` : "";
-          const url = `/api/ai/tts?text=${encoded}${langQuery}`;
-          const audio = new Audio(url);
-          activeAudioRef.current = audio;
-          audio.playbackRate = customRate ?? speechRate;
-          audio.onended = stepFinish;
-          audio.onerror = stepFinish;
-          audio.play().catch(stepFinish);
-        } catch {
-          stepFinish();
-        }
-      };
-
-      playNext();
-    },
-    [speechRate, stopSpeaking]
   );
 
   const playCorrect = useCallback(() => {
@@ -726,9 +654,10 @@ export function SoundAndThemeProvider({ children }: { children: React.ReactNode 
         setSpeechRate,
         speechVoiceURI,
         setSpeechVoiceURI,
+        questionSpeechMode,
+        setQuestionSpeechMode,
         availableVoices,
         speak,
-        speakSequence,
         speakAll,
         stopSpeaking,
         hasJapaneseVoice,

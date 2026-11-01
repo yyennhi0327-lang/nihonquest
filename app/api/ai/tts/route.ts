@@ -150,10 +150,16 @@ export async function GET(req: NextRequest) {
   const baseLang = langParam.split("-")[0];
   const defaultEdgeVoiceForLang = LANG_EDGE_VOICES[langParam] || LANG_EDGE_VOICES[baseLang] || "ja-JP-NanamiNeural";
 
-  // Clean text: strip emoji + parenthetical notes
+  // Clean text: strip emoji, clean IPA phonetic slashes, and preserve content
+  const isNonJa = langParam !== "ja" && !langParam.startsWith("ja-");
   const cleanText = text
     .replace(/\p{Extended_Pictographic}/gu, "")
-    .replace(/[\(\[\{（【].*?[\)\]\}）】]/g, "")
+    .replace(/\/ɸɯ\//g, "phát âm fu")
+    .replace(/\/ɕi\//g, "phát âm shi")
+    .replace(/\/t͡sɯ\//g, "phát âm tsu")
+    .replace(/\/[^\/]{1,8}\//g, "")
+    .replace(/_{2,}/g, "、")
+    .replace(isNonJa ? /[\(\[\{（【](.*?)[\)\]\}）】]/g : /[\(\[\{（【].*?[\)\]\}）】]/g, isNonJa ? " $1 " : "")
     .trim()
     .slice(0, 300);
 

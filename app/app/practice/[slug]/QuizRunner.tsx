@@ -9,7 +9,7 @@ import { notifyProgressUpdated } from "@/components/UserProgressContext";
 import { useNativeLanguage } from "@/components/LanguageContext";
 import { getLocalizedLessonTitle } from "@/lib/lessonLocalization";
 import { LocalizedQuizText, useQuizTextTranslation } from "@/lib/quizLocalization";
-import { getQuestionSpeechInfo, QuizSpeechMode } from "@/lib/questionSpeech";
+import { getQuestionSpeechInfo } from "@/lib/questionSpeech";
 import { useAiScreenContext } from "@/components/ai-sensei/AiScreenContext";
 import { SpeakButton } from "./LessonSections";
 import { IconArrowRight, IconCheck, IconClose, IconRefresh } from "./LessonIcons";
@@ -163,30 +163,9 @@ export function QuizRunner({
   nextLesson: NextLesson | null;
 }) {
   const router = useRouter();
-  const { playClick, playCorrect, playIncorrect, playFanfare, showToast, speak, speakSequence } = useSoundAndTheme();
+  const { playClick, playCorrect, playIncorrect, playFanfare, showToast, speak, questionSpeechMode } = useSoundAndTheme();
   const { t, nativeLanguage } = useNativeLanguage();
   const { setScreenQuiz, setScreenItem, recordSessionMistake } = useAiScreenContext();
-
-  // Speech mode: Full Nhật (ja_only) vs Song ngữ (bilingual: câu hỏi + từ tiếng Nhật)
-  const [speechMode, setSpeechMode] = useState<QuizSpeechMode>(() => {
-    if (typeof window !== "undefined") {
-      try {
-        const saved = localStorage.getItem("nq_quiz_speech_mode") as QuizSpeechMode;
-        if (saved === "ja_only" || saved === "bilingual") return saved;
-      } catch {}
-    }
-    return "ja_only";
-  });
-
-  const toggleSpeechMode = useCallback(() => {
-    setSpeechMode((prev) => {
-      const next: QuizSpeechMode = prev === "ja_only" ? "bilingual" : "ja_only";
-      try {
-        localStorage.setItem("nq_quiz_speech_mode", next);
-      } catch {}
-      return next;
-    });
-  }, []);
 
   // Hàng đợi câu hỏi (chỉ số vào lesson.exercises). "Hỏi khác" đẩy câu hiện tại xuống cuối hàng.
   const [queue, setQueue] = useState<number[]>(() => lesson.exercises.map((_, i) => i));
@@ -210,29 +189,13 @@ export function QuizRunner({
   const localizedQuestionText = useQuizTextTranslation(currentQuestionText);
 
   const speechInfo = useMemo(() => {
-    return getQuestionSpeechInfo(currentQuestionText, localizedQuestionText, nativeLanguage);
-  }, [currentQuestionText, localizedQuestionText, nativeLanguage]);
+    return getQuestionSpeechInfo(currentQuestionText, localizedQuestionText, nativeLanguage, questionSpeechMode);
+  }, [currentQuestionText, localizedQuestionText, nativeLanguage, questionSpeechMode]);
 
   const handleSpeakQuestion = useCallback(() => {
-    if (speechMode === "ja_only") {
-      // Full Nhật: chỉ đọc từ/câu tiếng Nhật trọng tâm
-      if (speechInfo.japaneseTarget) {
-        speak(speechInfo.japaneseTarget, undefined, undefined, "ja-JP");
-      } else {
-        speak(speechInfo.cleanQuestion, undefined, undefined, speechInfo.speechLang);
-      }
-    } else {
-      // Song ngữ: đọc câu hỏi bằng tiếng mẹ đẻ, sau đó phát âm từ tiếng Nhật
-      if (speechInfo.japaneseTarget && speechInfo.cleanQuestion) {
-        speakSequence([
-          { text: speechInfo.cleanQuestion, lang: speechInfo.speechLang, delayMs: 250 },
-          { text: speechInfo.japaneseTarget, lang: "ja-JP" },
-        ]);
-      } else {
-        speak(speechInfo.cleanQuestion, undefined, undefined, speechInfo.speechLang);
-      }
-    }
-  }, [speak, speakSequence, speechInfo, speechMode]);
+    if (!speechInfo.targetText) return;
+    speak(speechInfo.targetText, undefined, undefined, speechInfo.speechLang);
+  }, [speak, speechInfo]);
 
   useEffect(() => {
     if (currentExercise) {
@@ -668,30 +631,20 @@ export function QuizRunner({
             <i className="h-3 w-0.5 rounded bg-red-500" aria-hidden />
             {exerciseKind(currentExercise.contentType, t)}
           </span>
-          <div className="flex items-center gap-1.5 sm:gap-2">
-            {/* Chuyển chế độ: Full Nhật vs Song ngữ */}
-            <button
-              type="button"
-              onClick={toggleSpeechMode}
-              title={
-                speechMode === "ja_only"
-                  ? (t("speechModeJaDesc") || "Đang bật: Chỉ đọc tiếng Nhật. Bấm để đổi sang Song ngữ.")
-                  : (t("speechModeBiDesc") || "Đang bật: Song ngữ (Câu hỏi + Tiếng Nhật). Bấm để đổi sang Full Nhật.")
-              }
-              className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-black transition-all active:scale-95 border ${
-                speechMode === "ja_only"
-                  ? "bg-rose-50 text-red-600 border-red-200/80 hover:bg-rose-100 dark:bg-red-950/50 dark:text-red-300 dark:border-red-900/60"
-                  : "bg-indigo-50 text-indigo-600 border-indigo-200/80 hover:bg-indigo-100 dark:bg-indigo-950/50 dark:text-indigo-300 dark:border-indigo-900/60"
-              }`}
-            >
-              <span>{speechMode === "ja_only" ? "🇯🇵 Full Nhật" : "🌐 Song ngữ"}</span>
-            </button>
-
-            {speechInfo.badgeText && (
+          <div className="flex items-center gap-2">
+            {speechInfo.mode === "full_ja" ? (
+              <span className="rounded-md bg-amber-100 px-2 py-0.5 text-[10px] font-black text-amber-800 dark:bg-amber-950/60 dark:text-amber-300">
+                🇯🇵 Full Nhật
+              </span>
+            ) : speechInfo.mode === "bilingual" ? (
+              <span className="rounded-md bg-blue-100 px-2 py-0.5 text-[10px] font-black text-blue-800 dark:bg-blue-950/60 dark:text-blue-300">
+                🌐 Song ngữ
+              </span>
+            ) : speechInfo.badgeText ? (
               <span className="jp-text hidden rounded-lg border border-red-200/70 bg-rose-50/80 px-2.5 py-1 text-xs font-black text-red-600 dark:border-red-900/50 dark:bg-red-950/50 dark:text-red-300 sm:inline">
                 {speechInfo.badgeText}
               </span>
-            )}
+            ) : null}
             <SpeakButton onClick={handleSpeakQuestion} label={speechInfo.buttonLabel} />
           </div>
         </div>

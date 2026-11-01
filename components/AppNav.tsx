@@ -157,6 +157,8 @@ export function AppNav({
     setSpeechRate,
     speechVoiceURI,
     setSpeechVoiceURI,
+    questionSpeechMode,
+    setQuestionSpeechMode,
     availableVoices,
     speak,
     stopSpeaking,
@@ -476,6 +478,60 @@ export function AppNav({
                         </div>
                         <span className="text-xs text-slate-500 dark:text-slate-300 shrink-0">⚙️ Đổi</span>
                       </button>
+                    </div>
+
+                    {/* Chế độ đọc câu hỏi trắc nghiệm */}
+                    <div>
+                      <p className="mb-2 text-xs font-bold text-slate-600 dark:text-slate-300">
+                        🎧 Chế độ đọc câu hỏi
+                      </p>
+                      <div className="grid grid-cols-3 gap-1 rounded-xl bg-slate-100 p-1 dark:bg-sumi-950">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            playClick();
+                            setQuestionSpeechMode("target");
+                          }}
+                          className={`rounded-lg py-1.5 px-1 text-[11px] font-black transition ${
+                            questionSpeechMode === "target"
+                              ? "bg-white text-red-600 shadow-sm dark:bg-sumi-800 dark:text-red-400"
+                              : "text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white"
+                          }`}
+                          title="Chỉ phát âm từ hoặc câu tiếng Nhật trọng tâm"
+                        >
+                          🎯 Từ Nhật
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            playClick();
+                            setQuestionSpeechMode("bilingual");
+                          }}
+                          className={`rounded-lg py-1.5 px-1 text-[11px] font-black transition ${
+                            questionSpeechMode === "bilingual"
+                              ? "bg-white text-red-600 shadow-sm dark:bg-sumi-800 dark:text-red-400"
+                              : "text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white"
+                          }`}
+                          title="Đọc câu hỏi tiếng mẹ đẻ (Việt/Anh...) kèm phát âm"
+                        >
+                          🌐 Song ngữ
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            playClick();
+                            setQuestionSpeechMode("full_ja");
+                          }}
+                          className={`rounded-lg py-1.5 px-1 text-[11px] font-black transition ${
+                            questionSpeechMode === "full_ja"
+                              ? "bg-white text-red-600 shadow-sm dark:bg-sumi-800 dark:text-red-400"
+                              : "text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white"
+                          }`}
+                          title="Tự động dịch cả câu hỏi sang tiếng Nhật và đọc 100% tiếng Nhật"
+                        >
+                          🇯🇵 Full Nhật
+                        </button>
+                      </div>
                     </div>
 
                     <button
