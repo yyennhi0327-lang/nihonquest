@@ -43,6 +43,7 @@ interface SoundAndThemeContextType {
   setSpeechVoiceURI: (uri: string) => void;
   availableVoices: VoiceOption[];
   speak: (text: string, customRate?: number, customVoiceURI?: string, lang?: string) => void;
+  speakSequence: (items: Array<{ text: string; lang?: string; delayMs?: number }>, customRate?: number) => void;
   speakAll: (texts: string[], customRate?: number) => void;
   stopSpeaking: () => void;
   hasJapaneseVoice: boolean;
@@ -261,10 +262,17 @@ export function SoundAndThemeProvider({ children }: { children: React.ReactNode 
   const speak = useCallback(
     (text: string, customRate?: number, customVoiceURI?: string, lang?: string) => {
       if (!text || typeof window === "undefined") return;
-      const cleanText = text
-        .replace(/\p{Extended_Pictographic}/gu, "")
-        .replace(/[\(\[\{（【].*?[\)\]\}）】]/g, "")
-        .trim();
+      const isNonJa = Boolean(lang && !lang.toLowerCase().startsWith("ja"));
+      const cleanText = isNonJa
+        ? text
+            .replace(/\p{Extended_Pictographic}/gu, "")
+            .replace(/\/[^/\s]{1,10}\//g, "") // Clean IPA slashes e.g. /ɸɯ/
+            .replace(/_{2,}/g, " ")
+            .trim()
+        : text
+            .replace(/\p{Extended_Pictographic}/gu, "")
+            .replace(/[\(\[\{（【].*?[\)\]\}）】]/g, "")
+            .trim();
       if (!cleanText) return;
 
       stopSpeaking();
@@ -278,7 +286,6 @@ export function SoundAndThemeProvider({ children }: { children: React.ReactNode 
       };
       setSpeakingText(text);
 
-      const isNonJa = Boolean(lang && !lang.toLowerCase().startsWith("ja"));
       const targetVoice = customVoiceURI !== undefined ? customVoiceURI : (isNonJa ? "" : speechVoiceURI);
       const speechLang = lang || "ja-JP";
       const langCode = speechLang.split("-")[0].toLowerCase();
@@ -505,6 +512,106 @@ export function SoundAndThemeProvider({ children }: { children: React.ReactNode 
     [speechRate, speechVoiceURI, speak]
   );
 
+  const speakSequence = useCallback(
+    (items: Array<{ text: string; lang?: string; delayMs?: number }>, customRate?: number) => {
+      if (typeof window === "undefined" || items.length === 0) return;
+      stopSpeaking();
+
+      const sequenceId = ++speakIdRef.current;
+      let currentIndex = 0;
+
+      const playNext = () => {
+        if (speakIdRef.current !== sequenceId || currentIndex >= items.length) {
+          if (speakIdRef.current === sequenceId) {
+            setSpeakingText(null);
+            activeAudioRef.current = null;
+          }
+          return;
+        }
+
+        const currentItem = items[currentIndex++];
+        if (!currentItem || !currentItem.text) {
+          playNext();
+          return;
+        }
+
+        setSpeakingText(currentItem.text);
+        const itemLang = currentItem.lang || "ja-JP";
+        const isItemNonJa = !itemLang.toLowerCase().startsWith("ja");
+        const cleanText = isItemNonJa
+          ? currentItem.text
+              .replace(/\p{Extended_Pictographic}/gu, "")
+              .replace(/\/[^/\s]{1,10}\//g, "")
+              .replace(/_{2,}/g, " ")
+              .trim()
+          : currentItem.text
+              .replace(/\p{Extended_Pictographic}/gu, "")
+              .replace(/[\(\[\{（【].*?[\)\]\}）】]/g, "")
+              .trim();
+
+        if (!cleanText) {
+          playNext();
+          return;
+        }
+
+        const stepFinish = () => {
+          if (speakIdRef.current !== sequenceId) return;
+          if (currentItem.delayMs) {
+            setTimeout(playNext, currentItem.delayMs);
+          } else {
+            playNext();
+          }
+        };
+
+        // Try browser speech
+        try {
+          if ("speechSynthesis" in window) {
+            window.speechSynthesis.cancel();
+            const allVoices = window.speechSynthesis.getVoices();
+            const langPrefix = itemLang.split("-")[0].toLowerCase();
+            const matchedVoice = allVoices.find((v) => {
+              const vl = (v.lang || "").toLowerCase();
+              return vl === itemLang.toLowerCase() || vl.startsWith(langPrefix);
+            }) ?? null;
+
+            if (matchedVoice || !isItemNonJa) {
+              const u = new SpeechSynthesisUtterance(cleanText);
+              u.lang = itemLang;
+              u.rate = customRate ?? speechRate;
+              if (matchedVoice) u.voice = matchedVoice;
+              u.onend = stepFinish;
+              u.onerror = (e) => {
+                if (e.error !== "canceled" && e.error !== "interrupted") {
+                  stepFinish();
+                }
+              };
+              window.speechSynthesis.speak(u);
+              return;
+            }
+          }
+        } catch {}
+
+        // Fallback to audio endpoint
+        try {
+          const encoded = encodeURIComponent(cleanText.slice(0, 300));
+          const langQuery = isItemNonJa ? `&lang=${encodeURIComponent(itemLang)}` : "";
+          const url = `/api/ai/tts?text=${encoded}${langQuery}`;
+          const audio = new Audio(url);
+          activeAudioRef.current = audio;
+          audio.playbackRate = customRate ?? speechRate;
+          audio.onended = stepFinish;
+          audio.onerror = stepFinish;
+          audio.play().catch(stepFinish);
+        } catch {
+          stepFinish();
+        }
+      };
+
+      playNext();
+    },
+    [speechRate, stopSpeaking]
+  );
+
   const playCorrect = useCallback(() => {
     if (!soundEnabled) return;
     try {
@@ -621,6 +728,7 @@ export function SoundAndThemeProvider({ children }: { children: React.ReactNode 
         setSpeechVoiceURI,
         availableVoices,
         speak,
+        speakSequence,
         speakAll,
         stopSpeaking,
         hasJapaneseVoice,
